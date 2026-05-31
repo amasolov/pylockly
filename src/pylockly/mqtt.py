@@ -79,9 +79,8 @@ class LocklyMqtt:
         password = token.removeprefix("Bearer ").removeprefix("bearer ")
         username = email.lower()
 
-        tls_ctx = ssl.create_default_context()
-        tls_ctx.check_hostname = False
-        tls_ctx.verify_mode = ssl.CERT_NONE
+        loop = asyncio.get_running_loop()
+        tls_ctx = await loop.run_in_executor(None, self._create_tls_context)
 
         self._client = aiomqtt.Client(
             hostname=MQTT_BROKER_HOST,
@@ -96,6 +95,14 @@ class LocklyMqtt:
         self._connected = True
         self._listener_task = asyncio.create_task(self._listen())
         _LOGGER.info("MQTT connected as %s (client_id=%s)", username, client_id)
+
+    @staticmethod
+    def _create_tls_context() -> ssl.SSLContext:
+        """Create a TLS context for the MQTT connection (runs in executor)."""
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
 
     async def disconnect(self) -> None:
         """Disconnect from the MQTT broker."""
