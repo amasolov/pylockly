@@ -96,6 +96,13 @@ class LocklyMqtt:
 
         await self._client.__aenter__()
         self._connected = True
+
+        try:
+            await self._client.subscribe("#")
+            _LOGGER.debug("MQTT subscribed to wildcard topic #")
+        except Exception:
+            _LOGGER.debug("MQTT wildcard subscribe failed (broker may auto-route)")
+
         self._listener_task = asyncio.create_task(self._listen())
         _LOGGER.info("MQTT connected as %s (client_id=%s)", username, client_id)
 
@@ -150,7 +157,12 @@ class LocklyMqtt:
                     _LOGGER.warning("Failed to parse MQTT message: %s", exc)
                     continue
 
-                _LOGGER.debug("MQTT received: %s (id=%s)", msg.name, msg.request_id)
+                _LOGGER.debug(
+                    "MQTT received: %s (id=%s) topic=%s",
+                    msg.name,
+                    msg.request_id,
+                    getattr(message, "topic", "?"),
+                )
 
                 for cb in self._message_callbacks:
                     try:
