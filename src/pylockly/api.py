@@ -356,36 +356,31 @@ class LocklyAPI:
             http_status = resp.status
             data = await resp.json(content_type=None)
 
+        resp_header = data.get("header", {})
+        resp_name = resp_header.get("name", "")
+
         _LOGGER.debug(
-            "Event log response: http=%d cod=%s header=%s items=%d",
+            "Event log response: http=%d header.name=%s items=%d",
             http_status,
-            data.get("cod"),
-            data.get("header", {}).get("name"),
+            resp_name,
             len(data.get("payload", {}).get("items", [])),
         )
 
-        cod = data.get("cod")
-        if cod not in (0, 200, "200"):
-            _LOGGER.warning(
-                "Event log query failed: http=%d cod=%s msg=%s body=%s",
-                http_status,
-                cod,
-                data.get("msg"),
-                str(data)[:500],
+        if resp_name == "exception":
+            err = data.get("payload", {})
+            raise LocklyApiError(
+                str(err.get("code", 0)), err.get("message", "")
             )
+
+        cod = data.get("cod")
+        if cod is not None and cod not in (0, 200, "200"):
             raise LocklyApiError(
                 str(cod), data.get("msg", "event log query failed")
             )
 
-        auth = data.get("Authorization")
-        if auth:
-            self._auth_token = auth
-
-        resp_header = data.get("header", {})
-        if resp_header.get("name") == "exception":
-            err = data.get("payload", {})
+        if http_status != 200:
             raise LocklyApiError(
-                str(err.get("code", 0)), err.get("message", "")
+                str(http_status), f"HTTP {http_status}"
             )
 
         payload = data.get("payload", {})
