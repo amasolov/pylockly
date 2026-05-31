@@ -348,15 +348,31 @@ class LocklyAPI:
             "Authorization": self._auth_token,
         }
 
-        _LOGGER.debug("POST %s (event log query)", url)
+        _LOGGER.debug("POST %s (event log query, device=%s)", url, device_id)
 
         async with session.post(
             url, headers=headers, data=json.dumps(body)
         ) as resp:
+            http_status = resp.status
             data = await resp.json(content_type=None)
+
+        _LOGGER.debug(
+            "Event log response: http=%d cod=%s header=%s items=%d",
+            http_status,
+            data.get("cod"),
+            data.get("header", {}).get("name"),
+            len(data.get("payload", {}).get("items", [])),
+        )
 
         cod = data.get("cod")
         if cod not in (0, 200, "200"):
+            _LOGGER.warning(
+                "Event log query failed: http=%d cod=%s msg=%s body=%s",
+                http_status,
+                cod,
+                data.get("msg"),
+                str(data)[:500],
+            )
             raise LocklyApiError(
                 str(cod), data.get("msg", "event log query failed")
             )
