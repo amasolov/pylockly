@@ -9,7 +9,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time as time_mod
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import aiohttp
@@ -20,6 +22,8 @@ from .const import (
     CLIENT_OS,
     CLIENT_VER,
     CLIENT_VERSION_NAME,
+    MMS_BASE_URL,
+    MQTT_NAMESPACE,
     REST_BASE_URL,
 )
 from .crypto import (
@@ -30,7 +34,7 @@ from .crypto import (
     hash_password,
 )
 from .exceptions import LocklyApiError, LocklyAuthError
-from .models import DoorLock, HubMqttInfo
+from .models import DoorLock, HubMqttInfo, LockEvent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -294,3 +298,79 @@ class LocklyAPI:
 
         result = await self._json_request("asyncSend", params)
         return result.get("req_msg_id")
+
+    async def query_event_log(
+        self,
+        device_id: str,
+        start_ms: int = 0,
+        end_ms: int = 0,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[LockEvent]:
+        """Query lock event log via the MMS REST handler.
+
+        Uses the apiserv04c MMS endpoint (plain JSON, no DES3).
+        Timestamps are milliseconds since epoch; 0 means "open-ended".
+
+        Returns a list of LockEvent objects.
+        """
+        if not self._auth_token:
+            raise LocklyAuthError("Not authenticated; call login() first")
+
+        def _fmt(ms: int) -> str:
+            return datetime.fromtimestamp(
+                ms / 1000, tz=timezone.utc
+            ).strftime("%Y%m%d%H%M%S")
+
+        body: dict[str, Any] = {
+            "header": {
+                "namespace": MQTT_NAMESPACE,
+                "name": "lockEventLogQueryRequest",
+                "requestId": str(uuid.uuid4()),
+                "timestamp": int(time_mod.time() * 1000),
+            },
+            "payload": {
+                "deviceId": device_id,
+                "startTime": _fmt(start_ms) if start_ms else _fmt(0),
+                "endTime": _fmt(end_ms) if end_ms else _fmt(
+                    int(time_mod.time() * 1000)
+                ),
+                "offset": offset,
+                "limit": limit,
+            },
+        }
+
+        session = await self._ensure_session()
+        url = f"{MMS_BASE_URL}v1/proto/handler"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": self._auth_token,
+        }
+
+        _LOGGER.debug("POST %s (event log query)", url)
+
+        async with session.post(
+            url, headers=headers, data=json.dumps(body)
+        ) as resp:
+            data = await resp.json(content_type=None)
+
+        cod = data.get("cod")
+        if cod not in (0, 200, "200"):
+            raise LocklyApiError(
+                str(cod), data.get("msg", "event log query failed")
+            )
+
+        auth = data.get("Authorization")
+        if auth:
+            self._auth_token = auth
+
+        resp_header = data.get("header", {})
+        if resp_header.get("name") == "exception":
+            err = data.get("payload", {})
+            raise LocklyApiError(
+                str(err.get("code", 0)), err.get("message", "")
+            )
+
+        payload = data.get("payload", {})
+        return LockEvent.from_log_response(payload)

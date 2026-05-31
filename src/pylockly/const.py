@@ -3,6 +3,7 @@
 import base64
 
 REST_BASE_URL = "https://apiserv03c.lockly.com/pgsmtlkv2/api/"
+MMS_BASE_URL = "https://apiserv04c.lockly.com/mms/api/"
 
 MQTT_BROKER_HOST = (
     "mqttuswest02-lb-001-b5ed8c5e37b3a497.elb.us-west-2.amazonaws.com"
