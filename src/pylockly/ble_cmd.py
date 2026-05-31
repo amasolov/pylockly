@@ -248,11 +248,61 @@ def parse_ble_response(
         if len(dec_hex_stripped) >= 54:
             result["random_number"] = dec_hex_stripped[38:54]
         if len(dec_hex_stripped) >= 10:
+            status_byte = int(dec_hex_stripped[8:10], 16)
             result["lock_status_byte"] = dec_hex_stripped[8:10]
-            is_locked = ((int(dec_hex_stripped[8:10], 16) & 2) >> 1) == 1
-            result["is_locked"] = is_locked
+            result["is_locked"] = ((status_byte & 2) >> 1) == 1
+            result["wired_door_sensor"] = (status_byte & 1) == 1
+            result["wireless_door_sensor"] = ((status_byte & 4) >> 2) == 1
+            result["door_open"] = result["wired_door_sensor"] or result["wireless_door_sensor"]
+
+        if len(dec_hex_stripped) >= 18:
+            result["wakeup_voltage"] = _parse_le16(dec_hex_stripped[10:14])
+            result["start_voltage"] = _parse_le16(dec_hex_stripped[14:18])
+            result["battery_pct"] = voltage_to_battery_pct(
+                result["wakeup_voltage"]
+            )
 
     return result
+
+
+def _parse_le16(hex_str: str) -> int:
+    """Parse a 4-char hex string as a little-endian 16-bit integer."""
+    if len(hex_str) < 4:
+        return 0
+    lo = int(hex_str[0:2], 16)
+    hi = int(hex_str[2:4], 16)
+    return (hi << 8) | lo
+
+
+# PGD628F (6-model) voltage thresholds from Firebase Remote Config defaults.
+# Maps wakeup_voltage to battery percentage in 10% steps.
+_S6_VOLTAGE_THRESHOLDS: list[tuple[int, int]] = [
+    (600, 100),
+    (573, 90),
+    (550, 80),
+    (535, 70),
+    (524, 60),
+    (516, 50),
+    (505, 40),
+    (493, 30),
+    (472, 20),
+    (439, 10),
+    (383, 0),
+]
+
+
+def voltage_to_battery_pct(voltage: int) -> int:
+    """Convert a wakeup voltage reading to a battery percentage.
+
+    Uses the s6_power_threshold table (PGD628F / 6-model).
+    For other lock models this may need model-specific thresholds.
+    """
+    if voltage <= 0:
+        return 0
+    for threshold, pct in _S6_VOLTAGE_THRESHOLDS:
+        if voltage > threshold:
+            return pct
+    return 0
 
 
 def build_lock_command(

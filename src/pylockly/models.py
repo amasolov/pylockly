@@ -102,6 +102,54 @@ class DeviceState:
         return results
 
 
+UNLOCK_TYPE_NAMES: dict[str, str] = {
+    "1": "app",
+    "2": "keypad",
+    "3": "guest_code",
+    "4": "physical_key",
+    "5": "family_code",
+    "10": "rfid",
+    "11": "fingerprint",
+    "12": "one_time_code",
+    "32": "guest_fingerprint",
+    "63": "e_badge_unlock",
+    "64": "e_badge_lock",
+}
+
+
+@dataclass
+class LockEvent:
+    """A single lock event from the event log."""
+
+    event_id: int
+    event_type: str
+    user_id: str
+    time: str
+    lock_name: str | None = None
+    lock_user_name: str | None = None
+    timestamp: int = 0
+
+    @property
+    def event_type_name(self) -> str:
+        return UNLOCK_TYPE_NAMES.get(self.event_type, f"unknown_{self.event_type}")
+
+    @classmethod
+    def from_log_response(cls, payload: dict[str, Any]) -> list[LockEvent]:
+        """Parse the items array from a lockEventLogQueryResponse."""
+        results: list[LockEvent] = []
+        for item in payload.get("items", []):
+            results.append(cls(
+                event_id=item.get("eventId", 0),
+                event_type=str(item.get("eventType", "")),
+                user_id=str(item.get("userId", "")),
+                time=item.get("time", ""),
+                lock_name=item.get("lockName"),
+                lock_user_name=item.get("lockUserName"),
+                timestamp=int(item.get("timestamp", 0)),
+            ))
+        return results
+
+
 @dataclass
 class HubMqttInfo:
     """MQTT credentials for a hub, returned by hub/getinfo REST endpoint."""

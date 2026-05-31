@@ -29,15 +29,17 @@ from .const import (
     MQTT_RESPONSE_TIMEOUT,
     REQ_HUB_COMMAND,
     REQ_LOCK_COMMAND,
+    REQ_LOCK_LOG,
     REQ_PING,
     RESP_DEVICE_STATE,
     RESP_EXCEPTION,
     RESP_HUB_COMMAND,
     RESP_LOCK_COMMAND,
+    RESP_LOCK_LOG,
     RESP_PONG,
 )
 from .exceptions import LocklyMqttError, LocklyTimeoutError
-from .models import DeviceState, MqttMessage
+from .models import DeviceState, LockEvent, MqttMessage
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,6 +52,7 @@ class LocklyMqtt:
         self._listener_task: asyncio.Task[None] | None = None
         self._pending: dict[str, asyncio.Future[MqttMessage]] = {}
         self._state_callbacks: list[Callable[[list[DeviceState]], None]] = []
+        self._event_callbacks: list[Callable[[list[LockEvent]], None]] = []
         self._message_callbacks: list[Callable[[MqttMessage], None]] = []
         self._connected = False
 
@@ -163,6 +166,14 @@ class LocklyMqtt:
                         except Exception:
                             _LOGGER.exception("Error in state callback")
 
+                if msg.name == RESP_LOCK_LOG:
+                    events = LockEvent.from_log_response(msg.payload)
+                    for cb in self._event_callbacks:
+                        try:
+                            cb(events)
+                        except Exception:
+                            _LOGGER.exception("Error in event callback")
+
                 if msg.request_id and msg.request_id in self._pending:
                     fut = self._pending.pop(msg.request_id)
                     if not fut.done():
@@ -275,6 +286,36 @@ class LocklyMqtt:
         except LocklyTimeoutError:
             return False
 
+    async def query_event_log(
+        self,
+        device_id: str,
+        start_time: str,
+        end_time: str,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> MqttMessage:
+        """Query the lock event log via MQTT.
+
+        Args:
+            device_id: Lock UUID.
+            start_time: ISO 8601 start time string.
+            end_time: ISO 8601 end time string.
+            offset: Pagination offset.
+            limit: Max number of events to return.
+
+        Returns:
+            MqttMessage whose payload contains the log response
+            with items (eventType, userId, lockUserName, timestamp, etc.).
+        """
+        payload = {
+            "deviceId": device_id,
+            "startTime": start_time,
+            "endTime": end_time,
+            "offset": offset,
+            "limit": limit,
+        }
+        return await self._publish_and_wait(REQ_LOCK_LOG, payload)
+
     def on_device_state(
         self, callback: Callable[[list[DeviceState]], None]
     ) -> Callable[[], None]:
@@ -284,6 +325,16 @@ class LocklyMqtt:
         """
         self._state_callbacks.append(callback)
         return lambda: self._state_callbacks.remove(callback)
+
+    def on_lock_event(
+        self, callback: Callable[[list[LockEvent]], None]
+    ) -> Callable[[], None]:
+        """Register a callback for lock event log updates.
+
+        Returns a callable that unregisters the callback when called.
+        """
+        self._event_callbacks.append(callback)
+        return lambda: self._event_callbacks.remove(callback)
 
     def on_message(
         self, callback: Callable[[MqttMessage], None]
